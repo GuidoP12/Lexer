@@ -1,16 +1,12 @@
-"1- Definicion de tokens"
-"3- Tokenizacion"
-"5- Manejo de erroes"
-
 import sys
 import os
 
 class SmartHome:
     def __init__(self):
-
-        #TOKENS
+        # TOKENS: Solo palabras reservadas, atributos, booleanos y operadores
+        # Los identificadores de dispositivos (foco_, aire_) se evalúan dinámicamente.
         self.TOKENS = {
-            #Palabras de control
+            # Palabras de control
             "WHEN": "PR_WHEN",
             "EVERY": "PR_EVERY",
             "IF": "PR_IF",
@@ -19,64 +15,36 @@ class SmartHome:
             "DO": "PR_DO",
             "END": "PR_END",
 
-            #Literales Booleanos
+            # Literales Booleanos
             "TRUE": "BOOL_LITERAL",
             "FALSE": "BOOL_LITERAL",
             "OFF": "BOOL_LITERAL",
             "ON": "BOOL_LITERAL",
 
-            #Identificadores de Dispositivos
-            "FOCO": "ID_FOCO",
-            "AIRE": "ID_AIRE",
-            "PERSIANA": "ID_PERSIANA",
-            "CERRADURA": "ID_CERRADURA",
-            "RELOJ": "ID_RELOJ",
-            "ALTAVOZ": "ID_ALTAVOZ",
-            "ALARMA": "ID_ALARMA",
-
-            #Identificadores de Atributos
+            # Identificadores de Atributos
             "ESTADO": "ATTR_ESTADO",
             "BRILLO": "ATTR_BRILLO",
             "COLOR": "ATTR_COLOR",
             "MODO": "ATTR_MODO",
             "TEMP_OBJ": "ATTR_TEMP_OBJ",
+            "TEMP_OBJETIVO": "ATTR_TEMP_OBJ", # Variante vista en ejemplos
             "TEMP_ACT": "ATTR_TEMP_ACT",
             "POSICION": "ATTR_POSICION",
             "HORA": "ATTR_HORA",
             "FECHA": "ATTR_FECHA",
             "VOLUMEN": "ATTR_VOLUMEN",
-            "MURE": "ATTR_MUTE",
+            "MUTE": "ATTR_MUTE", # Corregido typo MURE -> MUTE
             "MENSAJE": "ATTR_MENSAJE",
-            "EMAIL_NOTIFICACION": "ATTR_EMAIL_NOTIF", #tengo dudas de esta derivacion
+            "EMAIL_NOTIF": "ATTR_EMAIL_NOTIF",
+            "EMAIL": "ATTR_EMAIL", # Variante vista en ejemplos
 
-            #Operadores y estructura
-                #Asignacion
-            "ASIGNACION": "OP_ASIG",
-                #Aritmeticos
-            "SUMA": "OP_SUMA",
-            "RESTA": "OP_RESTA",
-            "MULTIPLICACION": "OP_MULT",
-            "DIVISION": "OP_DIV",
-                #Relacionales
-            "IGUAL": "OP_IGUAL",
-            "DISTINTO": "OP_DISTINTO",
-            "MAYOR": "OP_MAYOR",
-            "MENOR": "OP_MENOR",
-            "MAYOR_IGUAL": "OP_MAYOR_IGUAL",
-            "MENOR_IGUAL": "OP_MENOR_IGUAL",
-                #Logicos
+            # Operadores logicos
             "AND": "OP_AND",
             "OR": "OP_OR",
             "NOT": "OP_NOT",
-            
-            #Delimitadores
-            "PARENTESIS_IZQ": "PAREN_IZQ",
-            "PARENTESIS_DER": "PAREN_DER",
-            "PUNTO": "PUNTO",
-            "FIN_LINEA": "FIN_LINEA"
         }
 
-    #TOKENIZACION
+    # TOKENIZACION
     def tokenize(self, code_text):
         pos = 0
         current_line = 1
@@ -101,63 +69,117 @@ class SmartHome:
 
             last_was_fin_linea = False
 
-            # 3 - Cadenas de texto con comillas
+            # 3 - Comentarios y Division
+            if char == '/':
+                if pos + 1 < len(code_text) and code_text[pos + 1] == '/':
+                    # Es un comentario //, avanzamos hasta el final de la linea
+                    while pos < len(code_text) and code_text[pos] != '\n':
+                        pos += 1
+                    continue
+                else:
+                    # Es el operador de division
+                    yield('OP_DIV', '/', current_line)
+                    pos += 1
+                    continue
+
+            # 4 - Cadenas de texto con comillas
             if char == '"':
                 inicio = pos
-                pos += 1 #Consumir comilla de apertura
-                while pos < len(code_text) and code_text[pos] != '"' and code_text[pos] != 'n':
+                pos += 1 # Consumir comilla de apertura
+                while pos < len(code_text) and code_text[pos] != '"' and code_text[pos] != '\n':
                     pos += 1
                 if pos < len(code_text) and code_text[pos] == '"':
-                    pos += 1 #consumir comilla de cierre
+                    pos += 1 # consumir comilla de cierre
                     texto_completo = code_text[inicio:pos]
                     yield('STRING', texto_completo, current_line)
                 else:
                     print(f"ERROR LEXICO: Cadena de texto sin cerrar en la línea {current_line}", file=sys.stderr)
                 continue
 
-            # 4 - Palabras (Identificadores, Atributos, Tokens)
+            # 5 - Correos Electronicos (Lookahead)
+            # Verificamos si la secuencia actual parece ser un email
+            temp_pos = pos
+            is_email = False
+            # Miramos hacia adelante hasta un espacio o delimitador
+            while temp_pos < len(code_text) and not code_text[temp_pos].isspace() and code_text[temp_pos] not in ['=', '<', '>', '!', '(', ')', '\n']:
+                if code_text[temp_pos] == '@':
+                    is_email = True
+                    break
+                temp_pos += 1
+
+            if is_email:
+                inicio = pos
+                # Capturamos todos los caracteres validos de un email incluyendo multiples puntos
+                while pos < len(code_text) and (code_text[pos].isalnum() or code_text[pos] in ['_', '-', '.', '+', '@']):
+                    pos += 1
+                yield('VAL_EMAIL', code_text[inicio:pos], current_line)
+                continue
+
+            # 6 - Palabras (Identificadores Dinámicos, Atributos, Palabras Reservadas)
             if char.isalpha() or char == '_':
                 inicio = pos
                 while pos < len(code_text) and (code_text[pos].isalnum() or code_text[pos] == '_'):
                     pos += 1
-                palabra_original = code_text[inicio:pos].strip()
-
+                palabra_original = code_text[inicio:pos]
                 palabra = palabra_original.upper()
 
                 if palabra in self.TOKENS:
-                    yield (self.TOKENS[palabra], palabra, current_line)
-
-                #Valores discretos sin comillas aceptados por la gramatica
-                elif palabra in ["rojo", "azul", "verde", "manual", "automatico", "invierno", "verano"]:
-                    yield('VAL_DISCRETO', palabra, current_line)
+                    yield (self.TOKENS[palabra], palabra_original, current_line)
+                # Valores discretos de los actuadores
+                elif palabra_original.lower() in ["rojo", "azul", "verde", "blanco", "frio", "calor", "vent"]:
+                    yield('VAL_DISCRETO', palabra_original, current_line)
+                # Identificadores dinamicos (Analisis por Prefijo)
+                elif palabra_original.startswith("foco_"):
+                    yield ('ID_FOCO', palabra_original, current_line)
+                elif palabra_original.startswith("aire_"):
+                    yield ('ID_AIRE', palabra_original, current_line)
+                elif palabra_original.startswith("persiana_"):
+                    yield ('ID_PERSIANA', palabra_original, current_line)
+                elif palabra_original.startswith("cerradura_"):
+                    yield ('ID_CERRADURA', palabra_original, current_line)
+                elif palabra_original.startswith("reloj_"):
+                    yield ('ID_RELOJ', palabra_original, current_line)
+                elif palabra_original.startswith("altavoz_"):
+                    yield ('ID_ALTAVOZ', palabra_original, current_line)
+                elif palabra_original.startswith("alarma_"):
+                    yield ('ID_ALARMA', palabra_original, current_line)
+                elif palabra_original.startswith("sensor_"):
+                    yield ('ID_SENSOR', palabra_original, current_line)
                 else:
-                    print(f"ERROR LEXICO: Identificador o palabra desconocida '{palabra}' en la línea {current_line}", file=sys.stderr)
+                    print(f"ERROR LEXICO: Identificador o palabra desconocida '{palabra_original}' en la línea {current_line}", file=sys.stderr)
                 continue
 
-            # 5 - Valores numericos y unidades fisicas
-            if char.isdigit():
+            # 7 - Valores numericos (Enteros, Decimales, Negativos) y unidades fisicas
+            # Se detecta el negativo '-' solo si le sigue un numero, sino es resta.
+            if char.isdigit() or (char == '-' and pos + 1 < len(code_text) and code_text[pos+1].isdigit()):
                 inicio = pos
-                while pos < len(code_text) and (code_text[pos].isalnum() or code_text[pos] in [':', '/', '%']):
-                        pos += 1
+                pos += 1 # Consumir el primer digito o el guion
+                # Permitimos punto decimal, grados °, dos puntos y barras para fechas
+                while pos < len(code_text) and (code_text[pos].isalnum() or code_text[pos] in ['.', '°', ':', '/', '%']):
+                    pos += 1
                 valor_completo = code_text[inicio:pos]
 
-                if valor_completo.endswith('C'):
+                if valor_completo.endswith('C') or valor_completo.endswith('°C'):
                     yield ('VAL_TEMP', valor_completo, current_line)
                 elif valor_completo.endswith('%'):
                     yield ('VAL_PORCENTAJE', valor_completo, current_line)
-                elif valor_completo.endswith('lux'):
-                    yield ('VAL_TIEMPO', valor_completo, current_line)
+                elif valor_completo.endswith('s') or valor_completo.endswith('m') or valor_completo.endswith('h') or valor_completo.endswith('lux'):
+                    yield ('VAL_TIEMPO_LUZ', valor_completo, current_line)
                 elif ':' in valor_completo:
                     yield('VAL_HORA', valor_completo, current_line)
                 elif '/' in valor_completo:
                     yield ('VAL_FECHA', valor_completo, current_line)
-                elif valor_completo.isdigit():
-                    yield ('VAL_NUMERO', valor_completo, current_line)
+                elif '.' in valor_completo:
+                    yield ('VAL_NUMERO_DECIMAL', valor_completo, current_line)
                 else:
-                    print(f"ERROR LEXICO: Formato de valor fisico desconocido '{valor_completo}' en la linea {current_line}", file=sys.stderr)
+                    try:
+                        int(valor_completo)
+                        yield ('VAL_NUMERO', valor_completo, current_line)
+                    except ValueError:
+                        print(f"ERROR LEXICO: Formato fisico o numerico desconocido '{valor_completo}' en la linea {current_line}", file=sys.stderr)
                 continue
 
-            # 6 - Operadores relacionales y asignacion
+            # 8 - Operadores relacionales y de asignacion
             if char == '=':
                 if pos + 1 < len(code_text) and code_text[pos + 1] == '=':
                     yield ('OP_IGUAL', '==', current_line)
@@ -190,11 +212,11 @@ class SmartHome:
                     yield ('OP_DISTINTO', '!=', current_line)
                     pos += 2
                 else:
-                    print(f"ERROR LEXICO: Simbolo '!' aislado invalidado en la linea {current_line}", file=sys.stderr)
+                    print(f"ERROR LEXICO: Simbolo '!' aislado invalido en la linea {current_line}", file=sys.stderr)
                     pos += 1
                 continue
 
-            # 7 - Delimitadores y operadores aritmeticos simples
+            # 9 - Delimitadores y operadores aritmeticos restantes
             if char == '.':
                 yield('PUNTO', '.', current_line)
                 pos += 1
@@ -212,6 +234,7 @@ class SmartHome:
                 pos += 1
                 continue
             if char == '-':
+                # Si llega hasta acá, es porque no era un número negativo
                 yield('OP_RESTA', '-', current_line)
                 pos += 1
                 continue
@@ -219,46 +242,40 @@ class SmartHome:
                 yield('OP_MULT', '*', current_line)
                 pos += 1
                 continue
-            if char == '/':
-                yield('OP_DIV', '/', current_line)
-                pos += 1
-                continue
 
-            # 8 - Error critico
+            # 10 - Error critico (Caracteres no contemplados en el lenguaje)
             print(f"ERROR LEXICO: Simbolo desconocido '{char}' en la linea {current_line}", file=sys.stderr)
             pos += 1
 
 def Resultados(lexer, script_text):
-    # Imprimimos el encabezado de la tabla con alineación fija (:<número)
     print(f"{'LINEA':<8} | {'TIPO DE TOKEN':<25} | {'VALOR ORIGINAL':<25}")
     print("-" * 65)
 
     lista_de_tokens = list(lexer.tokenize(script_text))
     
     for token_type, value, line in lista_de_tokens:
-        # Imprimimos la fila aplicando el espaciado fijo para que queden columnas perfectas
-        print(f"{line:<3} | {token_type:<25} | {value}")
+        print(f"{line:<8} | {token_type:<25} | {value}")
         
     print("="*65)
     print(f" Total de tokens procesados exitosamente: {len(lista_de_tokens)}")
     print("="*65 + "\n")  
 
 # =============================================================
-# EXTRA: Prueba de Ejecución
+# Prueba de Ejecución
 # =============================================================
 if __name__ == "__main__":
     lexer = SmartHome()
 
     while True:
         print("=" * 30)
-        print(f"Menu")
+        print("Menú Principal")
         print("=" * 30)
         print("1. Escribir codigo.")
         print("2. Cargar un script.")
         print("3. Script de prueba")
         print("4. Salir")
 
-        opcion = input("Seleccione una opcion(1-3): ").strip()
+        opcion = input("Seleccione una opcion (1-4): ").strip()
         if opcion == "1":
             print("\nEscriba el codigo línea por línea.")
             print("Cuando haya terminado, escriba la palabra FIN en una línea nueva para procesar:")
@@ -267,14 +284,11 @@ if __name__ == "__main__":
             lineas_usuario = []
             while True:
                 linea = input()
-                if linea.strip().upper() == "FIN":  # Si escribe 'FIN', salimos del bucle
+                if linea.strip().upper() == "FIN":
                     break
                 lineas_usuario.append(linea)
             
-            # Unimos todas las líneas capturadas con saltos de línea
             codigo_consola = "\n".join(lineas_usuario)
-            
-            # Procesamos el código resultante
             Resultados(lexer, codigo_consola)
 
         elif opcion == "2":
@@ -293,19 +307,18 @@ if __name__ == "__main__":
             print("=" * 40)
             print("Script de prueba")
             print("=" * 40)
-            script_domotica = """WHEN aire.temp_act > 25C DO
-            foco.estado = ON
-            altavoz.mensaje = "Alerta de calor"
-            END
-            """
+            # Ejemplo avanzado para testear todo: decimales, negativos, emails, prefijos y comentarios
+            script_domotica = """// Prueba del lexer avanzado
+WHEN sensor_humedad < 45.5% DO
+  foco_patio.estado = ON
+  aire_comedor.temp_objetivo = -5°C
+  altavoz_sala.email = admin@utn.frre.edu.ar
+END
+"""
             print(f"{script_domotica}")
             Resultados(lexer, script_domotica)
         elif opcion == "4":
             print("Proceso finalizado.")
             break
         else:
-            print("Opcion invalida.")            
-
-   
-
-      
+            print("Opcion invalida.")
